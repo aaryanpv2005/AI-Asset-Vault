@@ -3,12 +3,12 @@
 .env.*
 !.env.example
 
-# Python
+# Python cache
 __pycache__/
 *.py[cod]
 *.pyo
 
-# Virtual environments
+# Python virtual environments
 venv/
 .venv/
 
@@ -16,14 +16,16 @@ venv/
 backend/uploads/*
 !backend/uploads/.gitkeep
 
-# Node
+# Node dependencies
 node_modules/
+
+# Next.js build
 .next/
 out/
 
 # Logs
 *.log
 
-# OS
+# OS files
 .DS_Store
 Thumbs.db

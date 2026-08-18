@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session
-from sqlalchemy import or_ 
+from sqlalchemy import or_
 from app import models, schemas
 from app.auth import hash_password
 
@@ -13,17 +13,16 @@ def create_user(db: Session, user: schemas.UserCreate):
 
     db_user = models.User(
         full_name=user.full_name,
-        email=user.email, 
+        email=user.email,
         password_hash=hashed_password
     )
 
     db.add(db_user)
-
     db.commit()
-
     db.refresh(db_user)
 
     return db_user
+
 
 def authenticate_user(db: Session, email: str, password: str):
     """
@@ -44,6 +43,7 @@ def authenticate_user(db: Session, email: str, password: str):
 
     return user
 
+
 def create_asset(
     db: Session,
     current_user: models.User,
@@ -53,7 +53,8 @@ def create_asset(
     file_size: int,
     summary: str,
     document_text: str,
-    tags: str
+    tags: str,
+    expiry_date=None
 ):
     asset = models.Asset(
         user_id=current_user.id,
@@ -63,7 +64,8 @@ def create_asset(
         file_size=file_size,
         summary=summary,
         document_text=document_text,
-        tags=tags
+        tags=tags,
+        expiry_date=expiry_date
     )
 
     db.add(asset)
@@ -71,6 +73,7 @@ def create_asset(
     db.refresh(asset)
 
     return asset
+
 
 def get_user_assets(
     db: Session,
@@ -81,6 +84,8 @@ def get_user_assets(
         .filter(models.Asset.user_id == current_user.id)
         .all()
     )
+
+
 def get_asset_by_id(
     db: Session,
     asset_id: int
@@ -90,12 +95,27 @@ def get_asset_by_id(
         .filter(models.Asset.id == asset_id)
         .first()
     )
+
+
 def delete_asset(
     db: Session,
     asset: models.Asset
 ):
+    # Delete chat history linked to this asset
+    db.query(models.ChatHistory).filter(
+        models.ChatHistory.asset_id == asset.id
+    ).delete()
+
+    # Delete expiry reminders linked to this asset
+    db.query(models.ExpiryReminder).filter(
+        models.ExpiryReminder.asset_id == asset.id
+    ).delete()
+
+    # Delete the asset
     db.delete(asset)
+
     db.commit()
+
 
 def search_assets(
     db: Session,
@@ -114,6 +134,7 @@ def search_assets(
         )
         .all()
     )
+
 
 def get_dashboard_stats(
     db: Session,
@@ -149,6 +170,7 @@ def get_dashboard_stats(
         "other_files": other_files
     }
 
+
 def create_chat_history(
     db,
     user_id,
@@ -168,6 +190,7 @@ def create_chat_history(
     db.refresh(chat)
 
     return chat
+
 
 def get_chat_history(
     db,

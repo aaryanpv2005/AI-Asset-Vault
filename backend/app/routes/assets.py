@@ -4,9 +4,10 @@ from fastapi import (
     File,
     Depends,
     HTTPException,
-    Query 
+    Query,
+    Form
 )
-from fastapi.responses import FileResponse 
+from fastapi.responses import FileResponse
 
 from sqlalchemy.orm import Session
 
@@ -15,9 +16,10 @@ from app.dependencies import get_current_user
 from app import models, crud
 import app.schemas as schemas
 from app.services.pdf_service import extract_text_from_pdf
-from app.services.ai_service import generate_summary, generate_tags 
-from pydantic import BaseModel
-from app.services.ai_service import ask_document 
+from app.services.ai_service import generate_summary, generate_tags
+from app.services.ai_service import ask_document
+
+from datetime import date
 
 import os
 import shutil
@@ -28,12 +30,15 @@ router = APIRouter(
     tags=["Assets"]
 )
 
+
 @router.post("/upload")
 def upload_asset(
     file: UploadFile = File(...),
+    expiry_date: date | None = Form(None),
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
+
     extension = os.path.splitext(file.filename)[1]
     stored_name = f"{uuid.uuid4()}{extension}"
 
@@ -42,6 +47,7 @@ def upload_asset(
             os.path.dirname(os.path.abspath(__file__))
         )
     )
+
     UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
     os.makedirs(UPLOAD_DIR, exist_ok=True)
 
@@ -53,8 +59,10 @@ def upload_asset(
     file_size = os.path.getsize(upload_path)
 
     text = extract_text_from_pdf(upload_path)
+
     summary = generate_summary(text)
-    tags = generate_tags(text) 
+
+    tags = generate_tags(text)
 
     asset = crud.create_asset(
         db=db,
@@ -65,8 +73,9 @@ def upload_asset(
         file_size=file_size,
         summary=summary,
         document_text=text,
-        tags=tags
-    ) 
+        tags=tags,
+        expiry_date=expiry_date
+    )
 
     return {
         "message": "File uploaded successfully",
@@ -74,8 +83,10 @@ def upload_asset(
         "stored_name": stored_name,
         "uploaded_by": current_user.email,
         "summary": summary,
-        "tags": tags
+        "tags": tags,
+        "expiry_date": asset.expiry_date
     }
+
 
 @router.get("/my-assets")
 def get_my_assets(
@@ -86,6 +97,7 @@ def get_my_assets(
         db=db,
         current_user=current_user
     )
+
 
 @router.get("/search")
 def search_assets(
@@ -99,6 +111,7 @@ def search_assets(
         query=query
     )
 
+
 @router.get("/dashboard")
 def dashboard(
     db: Session = Depends(get_db),
@@ -109,8 +122,8 @@ def dashboard(
         current_user=current_user
     )
 
-@router.get("/{asset_id}/download")
-def download_asset(
+@router.get("/{asset_id}/preview")
+def preview_asset(
     asset_id: int,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
@@ -130,10 +143,57 @@ def download_asset(
         )
 
     BASE_DIR = os.path.dirname(
-    os.path.dirname(
-        os.path.dirname(os.path.abspath(__file__))
+        os.path.dirname(
+            os.path.dirname(os.path.abspath(__file__))
+        )
     )
-)
+
+    UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
+
+    file_path = os.path.join(
+        UPLOAD_DIR,
+        asset.stored_name
+    )
+
+    if not os.path.exists(file_path):
+        raise HTTPException(
+            status_code=404,
+            detail="File not found on server"
+        )
+
+    return FileResponse(
+        path=file_path,
+        media_type=asset.file_type
+    )
+
+
+@router.get("/{asset_id}/download")
+def download_asset(
+    asset_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+
+    asset = crud.get_asset_by_id(db, asset_id)
+
+    if not asset:
+        raise HTTPException(
+            status_code=404,
+            detail="Asset not found"
+        )
+
+    if asset.user_id != current_user.id:
+        raise HTTPException(
+            status_code=403,
+            detail="Access denied"
+        )
+
+    BASE_DIR = os.path.dirname(
+        os.path.dirname(
+            os.path.dirname(os.path.abspath(__file__))
+        )
+    )
+
     UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
     file_path = os.path.join(UPLOAD_DIR, asset.stored_name)
 
@@ -149,12 +209,14 @@ def download_asset(
         media_type=asset.file_type
     )
 
+
 @router.delete("/{asset_id}")
 def delete_asset(
     asset_id: int,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
+
     asset = crud.get_asset_by_id(db, asset_id)
 
     if not asset:
@@ -170,16 +232,13 @@ def delete_asset(
         )
 
     BASE_DIR = os.path.dirname(
-    os.path.dirname(
-        os.path.dirname(os.path.abspath(__file__))
+        os.path.dirname(
+            os.path.dirname(os.path.abspath(__file__))
+        )
     )
-)
+
     UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
     file_path = os.path.join(UPLOAD_DIR, asset.stored_name)
-
-    print("DELETE_DIR:", UPLOAD_DIR)
-    print("DELETE_PATH:", file_path)
-    print("EXISTS:", os.path.exists(file_path))
 
     if os.path.exists(file_path):
         os.remove(file_path)
@@ -198,6 +257,7 @@ def chat_with_document(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
+
     asset = crud.get_asset_by_id(db, asset_id)
 
     if not asset:
@@ -211,10 +271,10 @@ def chat_with_document(
             status_code=403,
             detail="Access denied"
         )
-    
+
     BASE_DIR = os.path.dirname(
         os.path.dirname(
-        os.path.dirname(os.path.abspath(__file__))
+            os.path.dirname(os.path.abspath(__file__))
         )
     )
 
@@ -235,17 +295,18 @@ def chat_with_document(
     )
 
     crud.create_chat_history(
-    db=db,
-    user_id=current_user.id,
-    asset_id=asset.id,
-    question=request.question,
-    answer=answer
-)
+        db=db,
+        user_id=current_user.id,
+        asset_id=asset.id,
+        question=request.question,
+        answer=answer
+    )
 
     return {
         "question": request.question,
         "answer": answer
     }
+
 
 @router.get("/{asset_id}/chat-history")
 def get_history(
@@ -253,6 +314,7 @@ def get_history(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
+
     asset = crud.get_asset_by_id(db, asset_id)
 
     if not asset:
@@ -268,9 +330,7 @@ def get_history(
         )
 
     return crud.get_chat_history(
-    db=db,
-    user_id=current_user.id,
-    asset_id=asset_id
-)
-
-    
+        db=db,
+        user_id=current_user.id,
+        asset_id=asset_id
+    )

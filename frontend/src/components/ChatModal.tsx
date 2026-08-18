@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import api from "@/lib/api";
 
 interface ChatModalProps {
@@ -22,15 +22,86 @@ export default function ChatModal({
 }: ChatModalProps) {
 
     const [question, setQuestion] = useState("");
-
     const [loading, setLoading] = useState(false);
 
-    const [messages, setMessages] = useState<Message[]>([
-        {
-            sender: "ai",
-            text: `Hello! Ask me anything about "${asset.file_name}".`,
-        },
-    ]);
+    const [messages, setMessages] = useState<Message[]>([]);
+
+    const bottomRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+
+        const loadHistory = async () => {
+
+            try {
+
+                const token = localStorage.getItem("token");
+
+                const response = await api.get(
+                    `/assets/${asset.id}/chat-history`,
+                    {
+                        headers: {
+                            Authorization: `Bearer ${token}`,
+                        },
+                    }
+                );
+
+                if (response.data.length === 0) {
+
+                    setMessages([
+                        {
+                            sender: "ai",
+                            text: `Hello! Ask me anything about "${asset.file_name}".`,
+                        },
+                    ]);
+
+                    return;
+
+                }
+
+                const history: Message[] = [];
+
+                response.data.forEach((chat: any) => {
+
+                    history.push({
+                        sender: "user",
+                        text: chat.question,
+                    });
+
+                    history.push({
+                        sender: "ai",
+                        text: chat.answer,
+                    });
+
+                });
+
+                setMessages(history);
+
+            } catch (error) {
+
+                console.error(error);
+
+                setMessages([
+                    {
+                        sender: "ai",
+                        text: `Hello! Ask me anything about "${asset.file_name}".`,
+                    },
+                ]);
+
+            }
+
+        };
+
+        loadHistory();
+
+    }, [asset]);
+
+    useEffect(() => {
+
+        bottomRef.current?.scrollIntoView({
+            behavior: "smooth",
+        });
+
+    }, [messages, loading]);
 
     const askAI = async () => {
 
@@ -98,7 +169,7 @@ export default function ChatModal({
 
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
 
-            <div className="bg-white rounded-xl shadow-xl w-[90vw] h-[85vh] flex flex-col"> 
+            <div className="bg-white rounded-xl shadow-xl w-[90vw] max-w-5xl h-[85vh] flex flex-col">
 
                 {/* Header */}
 
@@ -188,11 +259,13 @@ export default function ChatModal({
 
                     )}
 
+                    <div ref={bottomRef}></div>
+
                 </div>
 
                 {/* Input */}
 
-                <div className="border-t p-4 flex gap-3 items-center"> 
+                <div className="border-t p-4 flex gap-3 items-center">
 
                     <input
                         type="text"

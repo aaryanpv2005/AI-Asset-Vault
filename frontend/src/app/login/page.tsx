@@ -67,7 +67,7 @@ export default function LoginPage() {
             <div className="bg-white w-[420px] rounded-2xl shadow-2xl p-10">
 
                 <h1 className="text-4xl font-bold text-center text-blue-700 mb-2">
-                    AI Asset Vault
+                    AI Asset Vault 
                 </h1>
 
                 <p className="text-center text-gray-500 mb-8">

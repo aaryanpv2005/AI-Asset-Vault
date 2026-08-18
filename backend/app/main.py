@@ -2,9 +2,44 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.database import Base, engine
 import app.models
-from app.routes import users, assets 
+from app.routes import users, assets
+from apscheduler.schedulers.background import BackgroundScheduler
+from app.database import SessionLocal
+from app.expiry_service import check_expiry_reminders
 
 Base.metadata.create_all(bind=engine)
+
+scheduler = BackgroundScheduler()
+
+
+def run_expiry_check():
+
+    db = SessionLocal()
+
+    try:
+
+        check_expiry_reminders(db)
+
+    except Exception as e:
+
+        print("Expiry reminder check failed:", e)
+
+    finally:
+
+        db.close()
+
+
+scheduler.add_job(
+    run_expiry_check,
+    "interval",
+    days=1,
+    id="expiry_reminder_job",
+    replace_existing=True
+)
+
+scheduler.start()
+
+run_expiry_check()
 
 app = FastAPI(
     title="AI Asset Vault API",

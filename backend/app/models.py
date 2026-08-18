@@ -3,10 +3,11 @@ from sqlalchemy import (
     Integer,
     String,
     DateTime,
+    Date,
     ForeignKey,
     BigInteger,
     Text 
-)
+) 
 
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -48,11 +49,14 @@ class Asset(Base):
 
     owner = relationship("User", back_populates="assets")
 
-    summary = Column(Text, nullable=True) 
+    summary = Column(Text, nullable=True)
 
     document_text = Column(Text)
 
     tags = Column(Text, nullable=True)
+
+    # NEW
+    expiry_date = Column(Date, nullable=True)
 
 class ChatHistory(Base):
     __tablename__ = "chat_history"
@@ -65,4 +69,27 @@ class ChatHistory(Base):
     question = Column(Text, nullable=False)
     answer = Column(Text, nullable=False)
 
-    created_at = Column(DateTime, default=datetime.utcnow) 
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+class ExpiryReminder(Base):
+    __tablename__ = "expiry_reminders"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    asset_id = Column(
+        Integer,
+        ForeignKey("assets.id"),
+        nullable=False
+    )
+
+    reminder_type = Column(
+        String(20),
+        nullable=False
+    )
+
+    sent_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now()
+    )
+
+    asset = relationship("Asset")
