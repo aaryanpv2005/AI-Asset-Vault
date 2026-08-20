@@ -206,3 +206,15 @@ def get_chat_history(
         .order_by(models.ChatHistory.created_at.asc())
         .all()
     )
+
+def reset_user_password(
+    db: Session,
+    user: models.User,
+    new_password: str
+):
+    user.password_hash = hash_password(new_password)
+
+    db.commit()
+    db.refresh(user)
+
+    return user
