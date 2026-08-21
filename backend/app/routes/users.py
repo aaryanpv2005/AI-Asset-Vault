@@ -10,6 +10,7 @@ from app.services.password_reset_service import (
     create_password_reset_token,
     reset_user_password
 )
+import time
 
 router = APIRouter(
     prefix="/users",
@@ -25,15 +26,23 @@ def register_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
 
 # 👇 Add the login endpoint here
 
+
 @router.post("/login")
 def login_user(
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: Session = Depends(get_db)
 ):
+    start_time = time.time()
+
     authenticated_user = crud.authenticate_user(
         db,
         form_data.username,
         form_data.password
+    )
+
+    print(
+        f"Authentication took: "
+        f"{time.time() - start_time:.2f} seconds"
     )
 
     if authenticated_user is None:
@@ -49,10 +58,17 @@ def login_user(
         }
     )
 
+    print(
+        f"Total login took: "
+        f"{time.time() - start_time:.2f} seconds"
+    )
+
     return {
         "access_token": access_token,
         "token_type": "bearer"
     }
+
+
 
 @router.post("/forgot-password")
 def forgot_password(
@@ -76,8 +92,8 @@ def forgot_password(
     )
 
     reset_link = (
-        "http://localhost:3000/reset-password"
-        f"?token={token}"
+    "https://ai-asset-vault.onrender.com/reset-password"
+    f"?token={token}"
     )
 
     subject = "Reset your AI Asset Vault password"

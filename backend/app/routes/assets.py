@@ -18,8 +18,13 @@ import app.schemas as schemas
 from app.services.pdf_service import extract_text_from_pdf
 from app.services.ai_service import generate_summary, generate_tags
 from app.services.ai_service import ask_document
-
+from fastapi.responses import FileResponse, Response
 from datetime import date
+
+from app.services.supabase_service import (
+    supabase,
+    SUPABASE_BUCKET
+)
 
 import os
 import shutil
@@ -42,50 +47,83 @@ def upload_asset(
     extension = os.path.splitext(file.filename)[1]
     stored_name = f"{uuid.uuid4()}{extension}"
 
+    # Temporary local directory
     BASE_DIR = os.path.dirname(
         os.path.dirname(
             os.path.dirname(os.path.abspath(__file__))
         )
     )
 
-    UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
-    os.makedirs(UPLOAD_DIR, exist_ok=True)
+    TEMP_DIR = os.path.join(BASE_DIR, "temp_uploads")
+    os.makedirs(TEMP_DIR, exist_ok=True)
 
-    upload_path = os.path.join(UPLOAD_DIR, stored_name)
+    temp_path = os.path.join(TEMP_DIR, stored_name)
 
-    with open(upload_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
+    try:
 
-    file_size = os.path.getsize(upload_path)
+        # Save temporarily so PDF processing can happen
+        with open(temp_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
 
-    text = extract_text_from_pdf(upload_path)
+        file_size = os.path.getsize(temp_path)
 
-    summary = generate_summary(text)
+        # Extract document text
+        text = extract_text_from_pdf(temp_path)
 
-    tags = generate_tags(text)
+        # Generate AI summary and tags
+        summary = generate_summary(text)
+        tags = generate_tags(text)
 
-    asset = crud.create_asset(
-        db=db,
-        current_user=current_user,
-        file_name=file.filename,
-        stored_name=stored_name,
-        file_type=file.content_type,
-        file_size=file_size,
-        summary=summary,
-        document_text=text,
-        tags=tags,
-        expiry_date=expiry_date
-    )
+        # Organize files by user
+        storage_path = (
+            f"user_{current_user.id}/{stored_name}"
+        )
 
-    return {
-        "message": "File uploaded successfully",
-        "original_name": file.filename,
-        "stored_name": stored_name,
-        "uploaded_by": current_user.email,
-        "summary": summary,
-        "tags": tags,
-        "expiry_date": asset.expiry_date
-    }
+        # Upload file to Supabase Storage
+        with open(temp_path, "rb") as uploaded_file:
+
+            supabase.storage.from_(
+                SUPABASE_BUCKET
+            ).upload(
+                storage_path,
+                uploaded_file.read(),
+                {
+                    "content-type": (
+                        file.content_type
+                        or "application/octet-stream"
+                    )
+                }
+            )
+
+        # Create database record
+        asset = crud.create_asset(
+            db=db,
+            current_user=current_user,
+            file_name=file.filename,
+            stored_name=storage_path,
+            file_type=file.content_type,
+            file_size=file_size,
+            summary=summary,
+            document_text=text,
+            tags=tags,
+            expiry_date=expiry_date
+        )
+
+        return {
+            "message": "File uploaded successfully",
+            "original_name": file.filename,
+            "stored_name": storage_path,
+            "uploaded_by": current_user.email,
+            "summary": summary,
+            "tags": tags,
+            "expiry_date": asset.expiry_date
+        }
+
+    finally:
+
+        # Always remove temporary local file
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
 
 
 @router.get("/my-assets")
@@ -128,6 +166,7 @@ def preview_asset(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
+
     asset = crud.get_asset_by_id(db, asset_id)
 
     if not asset:
@@ -142,29 +181,39 @@ def preview_asset(
             detail="Access denied"
         )
 
-    BASE_DIR = os.path.dirname(
-        os.path.dirname(
-            os.path.dirname(os.path.abspath(__file__))
+    try:
+
+        # First try the path stored in the database
+        storage_path = asset.stored_name
+
+        file_data = supabase.storage.from_(
+            SUPABASE_BUCKET
+        ).download(storage_path)
+
+        return Response(
+            content=file_data,
+            media_type=(
+                asset.file_type
+                or "application/octet-stream"
+            ),
+            headers={
+                "Content-Disposition": (
+                    f'inline; filename="{asset.file_name}"'
+                )
+            }
         )
-    )
 
-    UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
+    except Exception as e:
 
-    file_path = os.path.join(
-        UPLOAD_DIR,
-        asset.stored_name
-    )
+        print(
+            f"Preview error for asset {asset_id}:",
+            repr(e)
+        )
 
-    if not os.path.exists(file_path):
         raise HTTPException(
-            status_code=404,
-            detail="File not found on server"
+            status_code=500,
+            detail="Unable to preview file"
         )
-
-    return FileResponse(
-        path=file_path,
-        media_type=asset.file_type
-    )
 
 
 @router.get("/{asset_id}/download")
@@ -188,26 +237,39 @@ def download_asset(
             detail="Access denied"
         )
 
-    BASE_DIR = os.path.dirname(
-        os.path.dirname(
-            os.path.dirname(os.path.abspath(__file__))
+    try:
+
+        # Use exactly the path stored in the database
+        storage_path = asset.stored_name
+
+        file_data = supabase.storage.from_(
+            SUPABASE_BUCKET
+        ).download(storage_path)
+
+        return Response(
+            content=file_data,
+            media_type=(
+                asset.file_type
+                or "application/octet-stream"
+            ),
+            headers={
+                "Content-Disposition": (
+                    f'attachment; filename="{asset.file_name}"'
+                )
+            }
         )
-    )
 
-    UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
-    file_path = os.path.join(UPLOAD_DIR, asset.stored_name)
+    except Exception as e:
 
-    if not os.path.exists(file_path):
+        print(
+            f"Download error for asset {asset_id}:",
+            repr(e)
+        )
+
         raise HTTPException(
-            status_code=404,
-            detail="File not found on server"
+            status_code=500,
+            detail="Unable to download file"
         )
-
-    return FileResponse(
-        path=file_path,
-        filename=asset.file_name,
-        media_type=asset.file_type
-    )
 
 
 @router.delete("/{asset_id}")
@@ -231,18 +293,25 @@ def delete_asset(
             detail="Access denied"
         )
 
-    BASE_DIR = os.path.dirname(
-        os.path.dirname(
-            os.path.dirname(os.path.abspath(__file__))
+    try:
+
+        # Delete the actual file from Supabase Storage
+        supabase.storage.from_(
+            SUPABASE_BUCKET
+        ).remove(
+            [asset.stored_name]
         )
-    )
 
-    UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
-    file_path = os.path.join(UPLOAD_DIR, asset.stored_name)
+    except Exception as e:
 
-    if os.path.exists(file_path):
-        os.remove(file_path)
+        print("Storage delete error:", e)
 
+        raise HTTPException(
+            status_code=500,
+            detail="Could not delete file from storage"
+        )
+
+    # Delete asset record and related chat history from database
     crud.delete_asset(db, asset)
 
     return {
@@ -272,25 +341,15 @@ def chat_with_document(
             detail="Access denied"
         )
 
-    BASE_DIR = os.path.dirname(
-        os.path.dirname(
-            os.path.dirname(os.path.abspath(__file__))
-        )
-    )
-
-    UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
-    file_path = os.path.join(UPLOAD_DIR, asset.stored_name)
-
-    if not os.path.exists(file_path):
+    # Use the document text already stored in PostgreSQL
+    if not asset.document_text:
         raise HTTPException(
-            status_code=404,
-            detail="File not found"
+            status_code=400,
+            detail="No document text available for this asset"
         )
-
-    document_text = extract_text_from_pdf(file_path)
 
     answer = ask_document(
-        document_text,
+        asset.document_text,
         request.question
     )
 

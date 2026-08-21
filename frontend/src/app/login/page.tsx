@@ -16,49 +16,63 @@ export default function LoginPage() {
     const [error, setError] = useState("");
 
     const handleLogin = async () => {
+    try {
+        setLoading(true);
+        setError("");
 
-        try {
+        const formData = new URLSearchParams();
 
-            setLoading(true);
-            setError("");
+        formData.append("username", email);
+        formData.append("password", password);
 
-            const formData = new URLSearchParams();
+        console.log(
+            "Sending login request to:",
+            process.env.NEXT_PUBLIC_API_URL
+        );
 
-            formData.append("username", email);
-            formData.append("password", password);
+        const response = await api.post(
+            "/users/login",
+            formData,
+            {
+                headers: {
+                    "Content-Type":
+                        "application/x-www-form-urlencoded",
+                },
+            }
+        );
 
-            const response = await api.post(
-                "/users/login",
-                formData,
-                {
-                    headers: {
-                        "Content-Type":
-                            "application/x-www-form-urlencoded",
-                    },
-                }
+        console.log("Login response:", response.data);
+
+        localStorage.setItem(
+            "token",
+            response.data.access_token
+        );
+
+        router.push("/dashboard");
+
+    } catch (err: any) {
+
+        console.error("FULL LOGIN ERROR:", err);
+
+        if (err.code === "ECONNABORTED") {
+            setError(
+                "The server took too long to respond. Please try again."
             );
-
-            localStorage.setItem(
-                "token",
-                response.data.access_token
+        } else if (err.message === "Network Error") {
+            setError(
+                "Unable to connect to the server."
             );
-
-            router.push("/dashboard");
-
-        } catch (err: any) {
-
+        } else {
             setError(
                 err.response?.data?.detail ||
                 "Login failed. Please try again."
             );
-
-        } finally {
-
-            setLoading(false);
-
         }
 
-    };
+    } finally {
+        setLoading(false);
+    }
+};
 
     return (
 
