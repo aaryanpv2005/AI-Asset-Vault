@@ -171,10 +171,10 @@ AI Asset Vault
         html_body=html_body
     )
 
-    if not email_sent:
-        print(
-            f"Password reset email could not be sent to {user.email}"
-        )
+    if email_sent:
+        print(f"Password reset email sent to {user.email}")
+    else:
+        print(f"Password reset email FAILED for {user.email}")
 
     return {
         "message": "If an account exists with that email, a password reset link has been sent."
