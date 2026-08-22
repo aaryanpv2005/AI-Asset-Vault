@@ -162,34 +162,31 @@ def dashboard(
 
 def fetch_file_from_supabase(stored_name: str, user_id: int):
     """
-    Attempts to download a file from Supabase using fallback path resolution
-    to support both legacy (raw UUID) and new (user_id prefix) files seamlessly.
+    Attempts to download a file from Supabase using multiple path strategies.
     """
-    # Strategy 1: Direct attempt using exact database stored_name
-    try:
-        return supabase.storage.from_(SUPABASE_BUCKET).download(stored_name)
-    except Exception:
-        pass
+    # Extract raw filename in case stored_name already has folders
+    raw_filename = stored_name.split("/")[-1]
 
-    # Strategy 2: If path lacks 'user_<id>/', attempt adding it
-    if not stored_name.startswith(f"user_{user_id}/"):
-        try:
-            fallback_path = f"user_{user_id}/{stored_name}"
-            return supabase.storage.from_(SUPABASE_BUCKET).download(fallback_path)
-        except Exception:
-            pass
+    candidate_paths = [
+        stored_name,                             # Strategy 1: As stored in DB
+        f"user_{user_id}/{raw_filename}",        # Strategy 2: User prefix folder
+        raw_filename                             # Strategy 3: Root of bucket
+    ]
 
-    # Strategy 3: If path contains 'user_<id>/', attempt stripping it
-    if "/" in stored_name:
+    # Remove duplicates while preserving order
+    seen = set()
+    unique_paths = [p for p in candidate_paths if not (p in seen or seen.add(p))]
+
+    for path in unique_paths:
         try:
-            raw_filename = stored_name.split("/", 1)[1]
-            return supabase.storage.from_(SUPABASE_BUCKET).download(raw_filename)
-        except Exception:
-            pass
+            print(f"[Supabase Storage] Attempting path: '{path}'")
+            return supabase.storage.from_(SUPABASE_BUCKET).download(path)
+        except Exception as e:
+            print(f"[Supabase Storage] Failed for path '{path}': {repr(e)}")
 
     raise HTTPException(
         status_code=404,
-        detail="File not found in cloud storage"
+        detail="File not found in storage bucket"
     )
 
 @router.get("/{asset_id}/preview")
@@ -297,7 +294,6 @@ def delete_asset(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
-
     asset = crud.get_asset_by_id(db, asset_id)
 
     if not asset:
@@ -312,23 +308,18 @@ def delete_asset(
             detail="Access denied"
         )
 
+    # Attempt to remove from Supabase using candidate paths
+    raw_filename = asset.stored_name.split("/")[-1]
+    candidate_paths = [
+        asset.stored_name,
+        f"user_{current_user.id}/{raw_filename}",
+        raw_filename
+    ]
+
     try:
-
-        # Delete the actual file from Supabase Storage
-        supabase.storage.from_(
-            SUPABASE_BUCKET
-        ).remove(
-            [asset.stored_name]
-        )
-
+        supabase.storage.from_(SUPABASE_BUCKET).remove(candidate_paths)
     except Exception as e:
-
-        print("Storage delete error:", e)
-
-        raise HTTPException(
-            status_code=500,
-            detail="Could not delete file from storage"
-        )
+        print(f"Storage delete non-fatal error: {repr(e)}")
 
     # Delete asset record and related chat history from database
     crud.delete_asset(db, asset)
