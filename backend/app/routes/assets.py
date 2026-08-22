@@ -65,34 +65,36 @@ def upload_asset(
     temp_path = f"/tmp/{stored_name}"
 
     try:
-        # Save file to temporary directory
+        # 1. Save temp file
         with open(temp_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
 
         file_size = os.path.getsize(temp_path)
 
-        # PDF Text Extraction
+        # 2. Extract PDF text
+        text = ""
         try:
             text = extract_text_from_pdf(temp_path) or ""
         except Exception as e:
-            print("PDF Extraction Warning:", repr(e))
-            text = ""
+            print("[PDF Extract Warning]:", repr(e))
 
-        # AI Summary (Isolated)
+        # 3. AI Summary
+        summary = "No summary available"
         try:
-            summary = generate_summary(text) if text else "No summary available"
+            if text:
+                summary = generate_summary(text)
         except Exception as e:
-            print("AI Summary Warning:", repr(e))
-            summary = "Summary generation unavailable"
+            print("[AI Summary Warning]:", repr(e))
 
-        # AI Tags (Isolated)
+        # 4. AI Tags
+        tags = ["Document"]
         try:
-            tags = generate_tags(text) if text else ["Document"]
+            if text:
+                tags = generate_tags(text)
         except Exception as e:
-            print("AI Tags Warning:", repr(e))
-            tags = ["Document"]
+            print("[AI Tags Warning]:", repr(e))
 
-        # Upload to Supabase Storage
+        # 5. Supabase Upload
         with open(temp_path, "rb") as uploaded_file:
             res = supabase.storage.from_(SUPABASE_BUCKET).upload(
                 path=storage_path,
@@ -101,7 +103,7 @@ def upload_asset(
             )
             print(f"[Supabase Upload Success]: {res}")
 
-        # Save record in Database
+        # 6. Database Entry
         asset = crud.create_asset(
             db=db,
             current_user=current_user,
@@ -132,16 +134,7 @@ def upload_asset(
     finally:
         if os.path.exists(temp_path):
             os.remove(temp_path)
-
-
-@router.get("/my-assets")
-def get_my_assets(
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user)
-):
-    return crud.get_user_assets(db=db, current_user=current_user)
-
-
+            
 @router.get("/search")
 def search_assets(
     query: str = Query(..., min_length=1),
