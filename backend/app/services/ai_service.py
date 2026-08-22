@@ -1,157 +1,63 @@
 import os
-import time
-
-from dotenv import load_dotenv
 from google import genai
+from dotenv import load_dotenv
 
 load_dotenv()
 
-client = genai.Client(
-    api_key=os.getenv("GEMINI_API_KEY")
-)
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-MODEL_NAME = "gemini-3.6-flash"
+# Initialize client safely
+client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
+def _extract_response_text(response) -> str:
+    """Helper to safely pull text from both objects and dictionaries."""
+    if not response:
+        return ""
+    if isinstance(response, dict):
+        return response.get("text", "") or str(response)
+    if hasattr(response, "text"):
+        return response.text or ""
+    return str(response)
 
 def generate_summary(text: str) -> str:
-
-    if not text.strip():
-        return "No readable text found in the document."
-
-    prompt = f"""
-Summarize the following document in 5-8 concise bullet points.
-
-{text}
-"""
-
-    max_retries = 3
-
-    for attempt in range(max_retries):
-
-        try:
-
-            response = client.models.generate_content(
-                model=MODEL_NAME,
-                contents=prompt,
-            )
-
-            if response.text:
-                return response.text.strip()
-
-            return "No summary could be generated."
-
-        except Exception as e:
-
-            error_message = str(e)
-
-            print(
-                f"AI summary attempt {attempt + 1} failed: "
-                f"{error_message}"
-            )
-
-            # Retry temporary service errors
-            if "503" in error_message or "UNAVAILABLE" in error_message:
-
-                if attempt < max_retries - 1:
-
-                    time.sleep(2)
-
-                    continue
-
-                return (
-                    "AI summary is temporarily unavailable. "
-                    "Please try uploading the document again later."
-                )
-
-            # Other AI errors
-            return (
-                "AI summary could not be generated. "
-                "Please try again later."
-            )
-
-    return "AI summary could not be generated."
-
-
-def generate_tags(text: str):
-
-    if not text.strip():
-        return ""
-
-    prompt = f"""
-Read the following document and generate 5 to 10 short, relevant tags.
-
-Rules:
-- Return only comma-separated tags.
-- No numbering.
-- No explanations.
-- Keep tags short (1-3 words).
-
-Document:
-{text[:10000]}
-"""
-
+    if not client or not text.strip():
+        return "Summary unavailable."
     try:
-
         response = client.models.generate_content(
-            model=MODEL_NAME,
+            model="gemini-2.5-flash",
+            contents=f"Provide a concise summary of the following text:\n\n{text[:4000]}"
+        )
+        return _extract_response_text(response) or "No summary generated."
+    except Exception as e:
+        print("AI Summary Error:", repr(e))
+        return "Failed to generate summary."
+
+def generate_tags(text: str) -> list[str]:
+    if not client or not text.strip():
+        return ["Document"]
+    try:
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=f"Extract 3 to 5 relevant short tags (comma-separated) for this text:\n\n{text[:4000]}"
+        )
+        raw_tags = _extract_response_text(response)
+        if raw_tags:
+            return [tag.strip() for tag in raw_tags.split(",") if tag.strip()]
+        return ["Document"]
+    except Exception as e:
+        print("AI Tags Error:", repr(e))
+        return ["Document"]
+
+def ask_document(document_text: str, question: str) -> str:
+    if not client or not document_text.strip():
+        return "AI chat is currently unavailable."
+    try:
+        prompt = f"Based on this document context:\n{document_text[:6000]}\n\nAnswer this question: {question}"
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
             contents=prompt
         )
-
-        if response.text:
-            return response.text.strip()
-
-        return ""
-
+        return _extract_response_text(response) or "No response generated."
     except Exception as e:
-
-        print(f"AI tag generation failed: {str(e)}")
-
-        return ""
-
-
-def ask_document(document_text: str, question: str):
-
-    prompt = f"""
-You are an AI assistant.
-
-Answer ONLY using the information provided in the document below.
-
-If the answer is not found in the document, reply:
-"I couldn't find that information in the document."
-
-Document:
-{document_text}
-
-Question:
-{question}
-"""
-
-    try:
-
-        response = client.models.generate_content(
-            model=MODEL_NAME,
-            contents=prompt
-        )
-
-        if response.text:
-            return response.text.strip()
-
-        return "I couldn't generate an answer at the moment."
-
-    except Exception as e:
-
-        error_message = str(e)
-
-        print(f"AI document chat failed: {error_message}")
-
-        if "503" in error_message or "UNAVAILABLE" in error_message:
-
-            return (
-                "The AI service is temporarily busy. "
-                "Please try your question again in a moment."
-            )
-
-        return (
-            "I couldn't process your question right now. "
-            "Please try again later."
-        )
+        print("AI Chat Error:", repr(e))
+        return "Failed to process question."
