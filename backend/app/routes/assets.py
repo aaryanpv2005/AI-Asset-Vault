@@ -1,3 +1,7 @@
+import os
+import shutil
+import uuid
+from datetime import date
 from fastapi import (
     APIRouter,
     UploadFile,
@@ -5,10 +9,9 @@ from fastapi import (
     Depends,
     HTTPException,
     Query,
-    Form
+    Form,
+    Response
 )
-from fastapi.responses import FileResponse
-
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -16,24 +19,35 @@ from app.dependencies import get_current_user
 from app import models, crud
 import app.schemas as schemas
 from app.services.pdf_service import extract_text_from_pdf
-from app.services.ai_service import generate_summary, generate_tags
-from app.services.ai_service import ask_document
-from fastapi.responses import FileResponse, Response
-from datetime import date
-
-from app.services.supabase_service import (
-    supabase,
-    SUPABASE_BUCKET
-)
-
-import os
-import shutil
-import uuid
+from app.services.ai_service import generate_summary, generate_tags, ask_document
+from app.services.supabase_service import supabase, SUPABASE_BUCKET
 
 router = APIRouter(
     prefix="/assets",
     tags=["Assets"]
 )
+
+
+def fetch_file_from_supabase(stored_name: str, user_id: int):
+    """Candidate path lookup to resolve legacy vs new storage paths."""
+    raw_filename = stored_name.split("/")[-1]
+    candidate_paths = [
+        stored_name,
+        f"user_{user_id}/{raw_filename}",
+        raw_filename
+    ]
+
+    seen = set()
+    unique_paths = [p for p in candidate_paths if not (p in seen or seen.add(p))]
+
+    for path in unique_paths:
+        try:
+            print(f"[Supabase Storage] Trying download path: '{path}'")
+            return supabase.storage.from_(SUPABASE_BUCKET).download(path)
+        except Exception as e:
+            print(f"[Supabase Storage] Path failed '{path}': {repr(e)}")
+
+    raise HTTPException(status_code=404, detail="File not found in storage bucket")
 
 
 @router.post("/upload")
@@ -48,31 +62,36 @@ def upload_asset(
     stored_name = f"{unique_id}{extension}"
     storage_path = f"user_{current_user.id}/{stored_name}"
 
-    # Use /tmp directory for Render compatibility
     temp_path = f"/tmp/{stored_name}"
 
     try:
-        # Save temp file
         with open(temp_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
 
         file_size = os.path.getsize(temp_path)
 
-        # Extract text & generate AI tags/summary
-        text = extract_text_from_pdf(temp_path) or ""
-        summary = generate_summary(text) if text else "No summary available"
-        tags = generate_tags(text) if text else []
+        try:
+            text = extract_text_from_pdf(temp_path) or ""
+        except Exception as e:
+            print("PDF Extraction Warning:", repr(e))
+            text = ""
 
-        # Upload to Supabase Storage
+        try:
+            summary = generate_summary(text) if text else "No summary available"
+            tags = generate_tags(text) if text else []
+        except Exception as e:
+            print("AI Generation Warning:", repr(e))
+            summary = "Summary generation unavailable"
+            tags = []
+
         with open(temp_path, "rb") as uploaded_file:
-            response = supabase.storage.from_(SUPABASE_BUCKET).upload(
+            res = supabase.storage.from_(SUPABASE_BUCKET).upload(
                 path=storage_path,
                 file=uploaded_file.read(),
                 file_options={"content-type": file.content_type or "application/octet-stream"}
             )
-            print(f"[Supabase Upload Success]: {response}")
+            print(f"[Supabase Upload Success]: {res}")
 
-        # Create database record
         asset = crud.create_asset(
             db=db,
             current_user=current_user,
@@ -97,11 +116,8 @@ def upload_asset(
         }
 
     except Exception as e:
-        print(f"[Upload Critical Error]: {repr(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Upload failed: {str(e)}"
-        )
+        print(f"[Upload Error Trace]: {repr(e)}")
+        raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
 
     finally:
         if os.path.exists(temp_path):
@@ -113,10 +129,7 @@ def get_my_assets(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
-    return crud.get_user_assets(
-        db=db,
-        current_user=current_user
-    )
+    return crud.get_user_assets(db=db, current_user=current_user)
 
 
 @router.get("/search")
@@ -125,11 +138,7 @@ def search_assets(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
-    return crud.search_assets(
-        db=db,
-        current_user=current_user,
-        query=query
-    )
+    return crud.search_assets(db=db, current_user=current_user, query=query)
 
 
 @router.get("/dashboard")
@@ -137,39 +146,8 @@ def dashboard(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
-    return crud.get_dashboard_stats(
-        db=db,
-        current_user=current_user
-    )
+    return crud.get_dashboard_stats(db=db, current_user=current_user)
 
-def fetch_file_from_supabase(stored_name: str, user_id: int):
-    """
-    Attempts to download a file from Supabase using multiple path strategies.
-    """
-    # Extract raw filename in case stored_name already has folders
-    raw_filename = stored_name.split("/")[-1]
-
-    candidate_paths = [
-        stored_name,                             # Strategy 1: As stored in DB
-        f"user_{user_id}/{raw_filename}",        # Strategy 2: User prefix folder
-        raw_filename                             # Strategy 3: Root of bucket
-    ]
-
-    # Remove duplicates while preserving order
-    seen = set()
-    unique_paths = [p for p in candidate_paths if not (p in seen or seen.add(p))]
-
-    for path in unique_paths:
-        try:
-            print(f"[Supabase Storage] Attempting path: '{path}'")
-            return supabase.storage.from_(SUPABASE_BUCKET).download(path)
-        except Exception as e:
-            print(f"[Supabase Storage] Failed for path '{path}': {repr(e)}")
-
-    raise HTTPException(
-        status_code=404,
-        detail="File not found in storage bucket"
-    )
 
 @router.get("/{asset_id}/preview")
 def preview_asset(
@@ -178,47 +156,23 @@ def preview_asset(
     current_user: models.User = Depends(get_current_user)
 ):
     asset = crud.get_asset_by_id(db, asset_id)
-
     if not asset:
-        raise HTTPException(
-            status_code=404,
-            detail="Asset not found"
-        )
-
+        raise HTTPException(status_code=404, detail="Asset not found")
     if asset.user_id != current_user.id:
-        raise HTTPException(
-            status_code=403,
-            detail="Access denied"
-        )
+        raise HTTPException(status_code=403, detail="Access denied")
 
     try:
-        # Use path fallback logic
         file_data = fetch_file_from_supabase(asset.stored_name, current_user.id)
-
         return Response(
             content=file_data,
-            media_type=(
-                asset.file_type
-                or "application/octet-stream"
-            ),
-            headers={
-                "Content-Disposition": (
-                    f'inline; filename="{asset.file_name}"'
-                )
-            }
+            media_type=asset.file_type or "application/octet-stream",
+            headers={"Content-Disposition": f'inline; filename="{asset.file_name}"'}
         )
-
     except HTTPException:
         raise
     except Exception as e:
-        print(
-            f"Preview error for asset {asset_id}:",
-            repr(e)
-        )
-        raise HTTPException(
-            status_code=500,
-            detail="Unable to preview file"
-        )
+        print("Preview error:", repr(e))
+        raise HTTPException(status_code=404, detail="File not found in storage")
 
 
 @router.get("/{asset_id}/download")
@@ -228,47 +182,24 @@ def download_asset(
     current_user: models.User = Depends(get_current_user)
 ):
     asset = crud.get_asset_by_id(db, asset_id)
-
     if not asset:
-        raise HTTPException(
-            status_code=404,
-            detail="Asset not found"
-        )
-
+        raise HTTPException(status_code=404, detail="Asset not found")
     if asset.user_id != current_user.id:
-        raise HTTPException(
-            status_code=403,
-            detail="Access denied"
-        )
+        raise HTTPException(status_code=403, detail="Access denied")
 
     try:
-        # Use path fallback logic
         file_data = fetch_file_from_supabase(asset.stored_name, current_user.id)
-
         return Response(
             content=file_data,
-            media_type=(
-                asset.file_type
-                or "application/octet-stream"
-            ),
-            headers={
-                "Content-Disposition": (
-                    f'attachment; filename="{asset.file_name}"'
-                )
-            }
+            media_type=asset.file_type or "application/octet-stream",
+            headers={"Content-Disposition": f'attachment; filename="{asset.file_name}"'}
         )
-
     except HTTPException:
         raise
     except Exception as e:
-        print(
-            f"Download error for asset {asset_id}:",
-            repr(e)
-        )
-        raise HTTPException(
-            status_code=500,
-            detail="Unable to download file"
-        )
+        print("Download error:", repr(e))
+        raise HTTPException(status_code=404, detail="File not found in storage")
+
 
 @router.delete("/{asset_id}")
 def delete_asset(
@@ -277,20 +208,11 @@ def delete_asset(
     current_user: models.User = Depends(get_current_user)
 ):
     asset = crud.get_asset_by_id(db, asset_id)
-
     if not asset:
-        raise HTTPException(
-            status_code=404,
-            detail="Asset not found"
-        )
-
+        raise HTTPException(status_code=404, detail="Asset not found")
     if asset.user_id != current_user.id:
-        raise HTTPException(
-            status_code=403,
-            detail="Access denied"
-        )
+        raise HTTPException(status_code=403, detail="Access denied")
 
-    # Attempt to remove from Supabase using candidate paths
     raw_filename = asset.stored_name.split("/")[-1]
     candidate_paths = [
         asset.stored_name,
@@ -301,14 +223,10 @@ def delete_asset(
     try:
         supabase.storage.from_(SUPABASE_BUCKET).remove(candidate_paths)
     except Exception as e:
-        print(f"Storage delete non-fatal error: {repr(e)}")
+        print("Storage delete non-fatal error:", repr(e))
 
-    # Delete asset record and related chat history from database
     crud.delete_asset(db, asset)
-
-    return {
-        "message": "Asset deleted successfully"
-    }
+    return {"message": "Asset deleted successfully"}
 
 
 @router.post("/{asset_id}/chat")
@@ -318,45 +236,19 @@ def chat_with_document(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
-
     asset = crud.get_asset_by_id(db, asset_id)
-
     if not asset:
-        raise HTTPException(
-            status_code=404,
-            detail="Asset not found"
-        )
-
+        raise HTTPException(status_code=404, detail="Asset not found")
     if asset.user_id != current_user.id:
-        raise HTTPException(
-            status_code=403,
-            detail="Access denied"
-        )
-
-    # Use the document text already stored in PostgreSQL
+        raise HTTPException(status_code=403, detail="Access denied")
     if not asset.document_text:
-        raise HTTPException(
-            status_code=400,
-            detail="No document text available for this asset"
-        )
+        raise HTTPException(status_code=400, detail="No document text available")
 
-    answer = ask_document(
-        asset.document_text,
-        request.question
-    )
-
+    answer = ask_document(asset.document_text, request.question)
     crud.create_chat_history(
-        db=db,
-        user_id=current_user.id,
-        asset_id=asset.id,
-        question=request.question,
-        answer=answer
+        db=db, user_id=current_user.id, asset_id=asset.id, question=request.question, answer=answer
     )
-
-    return {
-        "question": request.question,
-        "answer": answer
-    }
+    return {"question": request.question, "answer": answer}
 
 
 @router.get("/{asset_id}/chat-history")
@@ -365,23 +257,10 @@ def get_history(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
-
     asset = crud.get_asset_by_id(db, asset_id)
-
     if not asset:
-        raise HTTPException(
-            status_code=404,
-            detail="Asset not found"
-        )
-
+        raise HTTPException(status_code=404, detail="Asset not found")
     if asset.user_id != current_user.id:
-        raise HTTPException(
-            status_code=403,
-            detail="Access denied"
-        )
+        raise HTTPException(status_code=403, detail="Access denied")
 
-    return crud.get_chat_history(
-        db=db,
-        user_id=current_user.id,
-        asset_id=asset_id
-    )
+    return crud.get_chat_history(db=db, user_id=current_user.id, asset_id=asset_id)
