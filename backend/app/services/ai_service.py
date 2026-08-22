@@ -9,6 +9,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 # Initialize client safely
 client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
+
 def _extract_response_text(response) -> str:
     """Helper to safely pull text from both objects and dictionaries."""
     if not response:
@@ -18,6 +19,7 @@ def _extract_response_text(response) -> str:
     if hasattr(response, "text"):
         return response.text or ""
     return str(response)
+
 
 def generate_summary(text: str) -> str:
     if not client or not text.strip():
@@ -31,6 +33,7 @@ def generate_summary(text: str) -> str:
     except Exception as e:
         print("AI Summary Error:", repr(e))
         return "Failed to generate summary."
+
 
 def generate_tags(text: str) -> list[str]:
     if not client or not text.strip():
@@ -47,6 +50,7 @@ def generate_tags(text: str) -> list[str]:
     except Exception as e:
         print("AI Tags Error:", repr(e))
         return ["Document"]
+
 
 def ask_document(document_text: str, question: str) -> str:
     if not client or not document_text.strip():

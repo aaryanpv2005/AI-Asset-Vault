@@ -65,25 +65,34 @@ def upload_asset(
     temp_path = f"/tmp/{stored_name}"
 
     try:
+        # Save file to temporary directory
         with open(temp_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
 
         file_size = os.path.getsize(temp_path)
 
+        # PDF Text Extraction
         try:
             text = extract_text_from_pdf(temp_path) or ""
         except Exception as e:
             print("PDF Extraction Warning:", repr(e))
             text = ""
 
+        # AI Summary (Isolated)
         try:
             summary = generate_summary(text) if text else "No summary available"
-            tags = generate_tags(text) if text else []
         except Exception as e:
-            print("AI Generation Warning:", repr(e))
+            print("AI Summary Warning:", repr(e))
             summary = "Summary generation unavailable"
-            tags = []
 
+        # AI Tags (Isolated)
+        try:
+            tags = generate_tags(text) if text else ["Document"]
+        except Exception as e:
+            print("AI Tags Warning:", repr(e))
+            tags = ["Document"]
+
+        # Upload to Supabase Storage
         with open(temp_path, "rb") as uploaded_file:
             res = supabase.storage.from_(SUPABASE_BUCKET).upload(
                 path=storage_path,
@@ -92,6 +101,7 @@ def upload_asset(
             )
             print(f"[Supabase Upload Success]: {res}")
 
+        # Save record in Database
         asset = crud.create_asset(
             db=db,
             current_user=current_user,
