@@ -43,57 +43,34 @@ def upload_asset(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
-
     extension = os.path.splitext(file.filename)[1]
-    stored_name = f"{uuid.uuid4()}{extension}"
+    unique_id = str(uuid.uuid4())
+    stored_name = f"{unique_id}{extension}"
+    storage_path = f"user_{current_user.id}/{stored_name}"
 
-    # Temporary local directory
-    BASE_DIR = os.path.dirname(
-        os.path.dirname(
-            os.path.dirname(os.path.abspath(__file__))
-        )
-    )
-
-    TEMP_DIR = os.path.join(BASE_DIR, "temp_uploads")
-    os.makedirs(TEMP_DIR, exist_ok=True)
-
-    temp_path = os.path.join(TEMP_DIR, stored_name)
+    # Use /tmp directory for Render compatibility
+    temp_path = f"/tmp/{stored_name}"
 
     try:
-
-        # Save temporarily so PDF processing can happen
+        # Save temp file
         with open(temp_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
 
         file_size = os.path.getsize(temp_path)
 
-        # Extract document text
-        text = extract_text_from_pdf(temp_path)
+        # Extract text & generate AI tags/summary
+        text = extract_text_from_pdf(temp_path) or ""
+        summary = generate_summary(text) if text else "No summary available"
+        tags = generate_tags(text) if text else []
 
-        # Generate AI summary and tags
-        summary = generate_summary(text)
-        tags = generate_tags(text)
-
-        # Organize files by user
-        storage_path = (
-            f"user_{current_user.id}/{stored_name}"
-        )
-
-        # Upload file to Supabase Storage
+        # Upload to Supabase Storage
         with open(temp_path, "rb") as uploaded_file:
-
-            supabase.storage.from_(
-                SUPABASE_BUCKET
-            ).upload(
-                storage_path,
-                uploaded_file.read(),
-                {
-                    "content-type": (
-                        file.content_type
-                        or "application/octet-stream"
-                    )
-                }
+            response = supabase.storage.from_(SUPABASE_BUCKET).upload(
+                path=storage_path,
+                file=uploaded_file.read(),
+                file_options={"content-type": file.content_type or "application/octet-stream"}
             )
+            print(f"[Supabase Upload Success]: {response}")
 
         # Create database record
         asset = crud.create_asset(
@@ -119,9 +96,14 @@ def upload_asset(
             "expiry_date": asset.expiry_date
         }
 
-    finally:
+    except Exception as e:
+        print(f"[Upload Critical Error]: {repr(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Upload failed: {str(e)}"
+        )
 
-        # Always remove temporary local file
+    finally:
         if os.path.exists(temp_path):
             os.remove(temp_path)
 
