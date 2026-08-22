@@ -4,7 +4,10 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-resend.api_key = os.getenv("RESEND_API_KEY")
+# Set API key safely
+RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
+if RESEND_API_KEY:
+    resend.api_key = RESEND_API_KEY
 
 def send_email(
     recipient: str,
