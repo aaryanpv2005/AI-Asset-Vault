@@ -160,13 +160,44 @@ def dashboard(
         current_user=current_user
     )
 
+def fetch_file_from_supabase(stored_name: str, user_id: int):
+    """
+    Attempts to download a file from Supabase using fallback path resolution
+    to support both legacy (raw UUID) and new (user_id prefix) files seamlessly.
+    """
+    # Strategy 1: Direct attempt using exact database stored_name
+    try:
+        return supabase.storage.from_(SUPABASE_BUCKET).download(stored_name)
+    except Exception:
+        pass
+
+    # Strategy 2: If path lacks 'user_<id>/', attempt adding it
+    if not stored_name.startswith(f"user_{user_id}/"):
+        try:
+            fallback_path = f"user_{user_id}/{stored_name}"
+            return supabase.storage.from_(SUPABASE_BUCKET).download(fallback_path)
+        except Exception:
+            pass
+
+    # Strategy 3: If path contains 'user_<id>/', attempt stripping it
+    if "/" in stored_name:
+        try:
+            raw_filename = stored_name.split("/", 1)[1]
+            return supabase.storage.from_(SUPABASE_BUCKET).download(raw_filename)
+        except Exception:
+            pass
+
+    raise HTTPException(
+        status_code=404,
+        detail="File not found in cloud storage"
+    )
+
 @router.get("/{asset_id}/preview")
 def preview_asset(
     asset_id: int,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
-
     asset = crud.get_asset_by_id(db, asset_id)
 
     if not asset:
@@ -182,13 +213,8 @@ def preview_asset(
         )
 
     try:
-
-        # First try the path stored in the database
-        storage_path = asset.stored_name
-
-        file_data = supabase.storage.from_(
-            SUPABASE_BUCKET
-        ).download(storage_path)
+        # Use path fallback logic
+        file_data = fetch_file_from_supabase(asset.stored_name, current_user.id)
 
         return Response(
             content=file_data,
@@ -203,13 +229,13 @@ def preview_asset(
             }
         )
 
+    except HTTPException:
+        raise
     except Exception as e:
-
         print(
             f"Preview error for asset {asset_id}:",
             repr(e)
         )
-
         raise HTTPException(
             status_code=500,
             detail="Unable to preview file"
@@ -222,7 +248,6 @@ def download_asset(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
-
     asset = crud.get_asset_by_id(db, asset_id)
 
     if not asset:
@@ -238,13 +263,8 @@ def download_asset(
         )
 
     try:
-
-        # Use exactly the path stored in the database
-        storage_path = asset.stored_name
-
-        file_data = supabase.storage.from_(
-            SUPABASE_BUCKET
-        ).download(storage_path)
+        # Use path fallback logic
+        file_data = fetch_file_from_supabase(asset.stored_name, current_user.id)
 
         return Response(
             content=file_data,
@@ -259,18 +279,17 @@ def download_asset(
             }
         )
 
+    except HTTPException:
+        raise
     except Exception as e:
-
         print(
             f"Download error for asset {asset_id}:",
             repr(e)
         )
-
         raise HTTPException(
             status_code=500,
             detail="Unable to download file"
         )
-
 
 @router.delete("/{asset_id}")
 def delete_asset(
