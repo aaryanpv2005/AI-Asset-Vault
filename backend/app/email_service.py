@@ -1,16 +1,10 @@
 import os
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
+import resend
 from dotenv import load_dotenv
 
 load_dotenv()
 
-EMAIL_HOST = os.getenv("EMAIL_HOST", "smtp.gmail.com")
-EMAIL_PORT = int(os.getenv("EMAIL_PORT", "465"))
-EMAIL_USERNAME = os.getenv("EMAIL_USERNAME")
-EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
-EMAIL_FROM = os.getenv("EMAIL_FROM")
+resend.api_key = os.getenv("RESEND_API_KEY")
 
 def send_email(
     recipient: str,
@@ -18,29 +12,16 @@ def send_email(
     body: str,
     html_body: str | None = None
 ) -> bool:
-    message = MIMEMultipart("alternative")
-    message["From"] = EMAIL_FROM
-    message["To"] = recipient
-    message["Subject"] = subject
-    message.attach(MIMEText(body, "plain", "utf-8"))
-
-    if html_body:
-        message.attach(MIMEText(html_body, "html", "utf-8"))
-
     try:
-        # Use SMTP_SSL for Port 465
-        with smtplib.SMTP_SSL(
-            EMAIL_HOST,
-            EMAIL_PORT,
-            timeout=15
-        ) as server:
-            server.login(EMAIL_USERNAME, EMAIL_PASSWORD)
-            server.sendmail(
-                EMAIL_FROM,
-                recipient,
-                message.as_string()
-            )
-        print(f"Email sent successfully to {recipient}")
+        params = {
+            "from": "AI Asset Vault <onboarding@resend.dev>",
+            "to": [recipient],
+            "subject": subject,
+            "html": html_body or body,
+        }
+
+        email = resend.Emails.send(params)
+        print(f"Email sent successfully to {recipient}, ID: {email.get('id')}")
         return True
     except Exception as e:
         print("Email sending failed:", repr(e))
