@@ -50,7 +50,18 @@ def fetch_file_from_supabase(stored_name: str, user_id: int):
     raise HTTPException(status_code=404, detail="File not found in storage bucket")
 
 
+# RESTORED: Get My Assets route (handles both with and without trailing slashes)
+@router.get("/my-assets")
+@router.get("/my-assets/")
+def get_my_assets(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    return crud.get_user_assets(db=db, current_user=current_user)
+
+
 @router.post("/upload")
+@router.post("/upload/")
 def upload_asset(
     file: UploadFile = File(...),
     expiry_date: date | None = Form(None),
@@ -134,8 +145,10 @@ def upload_asset(
     finally:
         if os.path.exists(temp_path):
             os.remove(temp_path)
-            
+
+
 @router.get("/search")
+@router.get("/search/")
 def search_assets(
     query: str = Query(..., min_length=1),
     db: Session = Depends(get_db),
@@ -145,6 +158,7 @@ def search_assets(
 
 
 @router.get("/dashboard")
+@router.get("/dashboard/")
 def dashboard(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
