@@ -11,7 +11,7 @@ client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
 
 def _extract_response_text(response) -> str:
-    """Safely extracts text whether response is a dictionary, object, or string."""
+    """Helper to safely extract text whether response is a dict, string, or object."""
     if not response:
         return ""
     if isinstance(response, dict):
