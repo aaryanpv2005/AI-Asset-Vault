@@ -21,6 +21,7 @@ import app.schemas as schemas
 from app.services.pdf_service import extract_text_from_pdf
 from app.services.ai_service import generate_summary, generate_tags, ask_document
 from app.services.supabase_service import supabase, SUPABASE_BUCKET
+from app.expiry_service import check_expiry_reminders
 
 router = APIRouter(
     prefix="/assets",
@@ -281,3 +282,8 @@ def get_history(
         raise HTTPException(status_code=403, detail="Access denied")
 
     return crud.get_chat_history(db=db, user_id=current_user.id, asset_id=asset_id)
+
+@router.post("/test-expiry")
+def trigger_expiry_test(db: Session = Depends(get_db)):
+    check_expiry_reminders(db)
+    return {"message": "Expiry check ran successfully!"}
