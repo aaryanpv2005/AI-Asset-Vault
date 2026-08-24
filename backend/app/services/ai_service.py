@@ -6,21 +6,19 @@ load_dotenv()
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-# Initialize client safely
 client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
 
-def _safe_get_text(response) -> str:
-    """Safely extracts text regardless of whether response is a dict, object, or string."""
+def _get_text(response) -> str:
+    """Never accesses .text directly to prevent AttributeError on dicts/errors."""
     if not response:
         return ""
     if isinstance(response, str):
         return response
     if isinstance(response, dict):
-        return response.get("text", "") or str(response)
-    # Check if object has text attribute without throwing AttributeError
+        return str(response.get("text", response))
     try:
-        return getattr(response, "text", "") or str(response)
+        return str(getattr(response, "text", response))
     except Exception:
         return str(response)
 
@@ -33,8 +31,7 @@ def generate_summary(text: str) -> str:
             model="gemini-2.5-flash",
             contents=f"Provide a concise summary of the following text:\n\n{text[:4000]}"
         )
-        extracted = _safe_get_text(response)
-        return extracted if extracted else "No summary generated."
+        return _get_text(response) or "No summary generated."
     except Exception as e:
         print("[AI Summary Error]:", repr(e))
         return "Failed to generate summary."
@@ -48,8 +45,8 @@ def generate_tags(text: str) -> list[str]:
             model="gemini-2.5-flash",
             contents=f"Extract 3 to 5 relevant short tags (comma-separated) for this text:\n\n{text[:4000]}"
         )
-        raw_tags = _safe_get_text(response)
-        if raw_tags:
+        raw_tags = _get_text(response)
+        if raw_tags and isinstance(raw_tags, str):
             return [tag.strip() for tag in raw_tags.split(",") if tag.strip()]
         return ["Document"]
     except Exception as e:
@@ -66,8 +63,7 @@ def ask_document(document_text: str, question: str) -> str:
             model="gemini-2.5-flash",
             contents=prompt
         )
-        extracted = _safe_get_text(response)
-        return extracted if extracted else "No response generated."
+        return _get_text(response) or "No response generated."
     except Exception as e:
         print("[AI Chat Error]:", repr(e))
         return "Failed to process question."
