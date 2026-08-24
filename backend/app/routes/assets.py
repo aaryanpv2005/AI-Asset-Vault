@@ -283,7 +283,7 @@ def get_history(
 
     return crud.get_chat_history(db=db, user_id=current_user.id, asset_id=asset_id)
 
-@router.post("/test-expiry")
+@router.get("/test-expiry")
 def trigger_expiry_test(db: Session = Depends(get_db)):
     check_expiry_reminders(db)
     return {"message": "Expiry check ran successfully!"}
